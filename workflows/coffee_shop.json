@@ -1,0 +1,265 @@
+{
+  "name": "coffee_shop",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "readStatus": "unread"
+        },
+        "options": {
+          "downloadAttachments": true
+        }
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "318d7a8f-b3e8-4e10-8a28-2919c3a6cab3",
+      "name": "Gmail Trigger"
+    },
+    {
+      "parameters": {
+        "binaryPropertyName": "attachment_0",
+        "options": {
+          "delimiter": "|"
+        }
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        224,
+        0
+      ],
+      "id": "fb2122c3-e5ae-4049-87e5-71de01f6d7d5",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nfor (const item of items) {\n    item.json.revenue =\n        Number(item.json.transaction_qty) *\n        Number(item.json.unit_price);\n}\n\nreturn items;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "id": "b0961332-9ed0-473a-b560-290b711b4d46",
+      "name": "Calculate Revenue"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\n// --------------------\n// BASIC VARIABLES\n// --------------------\n\nlet totalRevenue = 0;\nlet totalQuantity = 0;\n\nconst transactionIds = new Set();\n\nconst storeRevenue = {};\nconst categoryRevenue = {};\nconst productRevenue = {};\nconst productQuantity = {};\nconst hourlyRevenue = {};\nconst dailyRevenue = {};\n\nlet validRows = 0;\nlet invalidRows = 0;\n\n\n// --------------------\n// PROCESS ALL ROWS\n// --------------------\n\nfor (const item of items) {\n\n    const d = item.json;\n\n    // Skip invalid rows if Data Quality node exists\n    if (d.is_valid === false) {\n        invalidRows++;\n        continue;\n    }\n\n    validRows++;\n\n    const revenue = Number(d.revenue || 0);\n    const qty = Number(d.transaction_qty || 0);\n\n    totalRevenue += revenue;\n    totalQuantity += qty;\n\n    if (d.transaction_id !== undefined) {\n        transactionIds.add(String(d.transaction_id));\n    }\n\n\n    // STORE REVENUE\n    const store = d.store_location || \"Unknown\";\n\n    if (!storeRevenue[store]) {\n        storeRevenue[store] = 0;\n    }\n\n    storeRevenue[store] += revenue;\n\n\n    // CATEGORY REVENUE\n    const category = d.product_category || \"Unknown\";\n\n    if (!categoryRevenue[category]) {\n        categoryRevenue[category] = 0;\n    }\n\n    categoryRevenue[category] += revenue;\n\n\n    // PRODUCT REVENUE + QUANTITY\n    const product = d.product_detail || \"Unknown\";\n\n    if (!productRevenue[product]) {\n        productRevenue[product] = 0;\n        productQuantity[product] = 0;\n    }\n\n    productRevenue[product] += revenue;\n    productQuantity[product] += qty;\n\n\n    // HOURLY REVENUE\n    if (d.transaction_time) {\n\n        const hour = String(d.transaction_time).split(\":\")[0];\n\n        if (!hourlyRevenue[hour]) {\n            hourlyRevenue[hour] = 0;\n        }\n\n        hourlyRevenue[hour] += revenue;\n    }\n\n\n    // DAILY REVENUE\n    if (d.transaction_date) {\n\n        const date = String(d.transaction_date);\n\n        if (!dailyRevenue[date]) {\n            dailyRevenue[date] = 0;\n        }\n\n        dailyRevenue[date] += revenue;\n    }\n}\n\n\n// --------------------\n// HELPER FUNCTIONS\n// --------------------\n\nfunction sortDescending(obj) {\n    return Object.entries(obj)\n        .sort((a, b) => b[1] - a[1]);\n}\n\nfunction sortAscending(obj) {\n    return Object.entries(obj)\n        .sort((a, b) => a[1] - b[1]);\n}\n\n\n// --------------------\n// BASIC KPIs\n// --------------------\n\nconst totalTransactions = transactionIds.size;\n\nconst averageTransactionValue =\n    totalTransactions > 0\n        ? totalRevenue / totalTransactions\n        : 0;\n\n\nconst storesSorted = sortDescending(storeRevenue);\nconst categoriesSorted = sortDescending(categoryRevenue);\nconst productsSorted = sortDescending(productRevenue);\nconst hoursSorted = sortDescending(hourlyRevenue);\nconst datesSorted = sortDescending(dailyRevenue);\n\n\n// --------------------\n// TOP / LOW PERFORMERS\n// --------------------\n\nconst topStore = storesSorted[0] || [\"N/A\", 0];\nconst topCategory = categoriesSorted[0] || [\"N/A\", 0];\nconst topProduct = productsSorted[0] || [\"N/A\", 0];\n\nconst lowestProduct =\n    sortAscending(productRevenue)[0] || [\"N/A\", 0];\n\nconst busiestHour =\n    hoursSorted[0] || [\"N/A\", 0];\n\nconst slowestHour =\n    sortAscending(hourlyRevenue)[0] || [\"N/A\", 0];\n\nconst bestDay =\n    datesSorted[0] || [\"N/A\", 0];\n\nconst worstDay =\n    sortAscending(dailyRevenue)[0] || [\"N/A\", 0];\n\n\n// --------------------\n// TOP 5 PRODUCTS\n// --------------------\n\nconst top5Products = productsSorted\n    .slice(0, 5)\n    .map(([name, revenue]) => ({\n        name,\n        revenue: Number(revenue.toFixed(2)),\n        quantity: productQuantity[name] || 0\n    }));\n\n\n// --------------------\n// BOTTOM 5 PRODUCTS\n// --------------------\n\nconst bottom5Products = sortAscending(productRevenue)\n    .slice(0, 5)\n    .map(([name, revenue]) => ({\n        name,\n        revenue: Number(revenue.toFixed(2)),\n        quantity: productQuantity[name] || 0\n    }));\n\n\n// --------------------\n// STORE RANKING\n// --------------------\n\nconst storeRanking = storesSorted.map(\n    ([name, revenue], index) => ({\n        rank: index + 1,\n        name,\n        revenue: Number(revenue.toFixed(2)),\n        contributionPercent:\n            totalRevenue > 0\n                ? Number(((revenue / totalRevenue) * 100).toFixed(2))\n                : 0\n    })\n);\n\n\n// --------------------\n// CATEGORY CONTRIBUTION\n// --------------------\n\nconst categoryContribution = categoriesSorted.map(\n    ([name, revenue]) => ({\n        name,\n        revenue: Number(revenue.toFixed(2)),\n        contributionPercent:\n            totalRevenue > 0\n                ? Number(((revenue / totalRevenue) * 100).toFixed(2))\n                : 0\n    })\n);\n\n\n// --------------------\n// DAILY GROWTH\n// --------------------\n\nconst chronologicalDates =\n    Object.keys(dailyRevenue).sort();\n\nlet dailyGrowthPercent = null;\n\nif (chronologicalDates.length >= 2) {\n\n    const latestDate =\n        chronologicalDates[chronologicalDates.length - 1];\n\n    const previousDate =\n        chronologicalDates[chronologicalDates.length - 2];\n\n    const latestRevenue =\n        dailyRevenue[latestDate];\n\n    const previousRevenue =\n        dailyRevenue[previousDate];\n\n    if (previousRevenue > 0) {\n\n        dailyGrowthPercent =\n            Number(\n                (\n                    ((latestRevenue - previousRevenue)\n                    / previousRevenue) * 100\n                ).toFixed(2)\n            );\n    }\n}\n\n\n// --------------------\n// ANOMALY DETECTION\n// --------------------\n\nconst anomalies = [];\n\nconst dailyValues =\n    Object.values(dailyRevenue);\n\nif (dailyValues.length >= 3) {\n\n    const avgDailyRevenue =\n        dailyValues.reduce((a, b) => a + b, 0)\n        / dailyValues.length;\n\n    for (const [date, revenue] of Object.entries(dailyRevenue)) {\n\n        const differencePercent =\n            ((revenue - avgDailyRevenue)\n            / avgDailyRevenue) * 100;\n\n        if (differencePercent >= 40) {\n\n            anomalies.push(\n                `${date}: Revenue spike of ${differencePercent.toFixed(1)}% above average`\n            );\n        }\n\n        else if (differencePercent <= -40) {\n\n            anomalies.push(\n                `${date}: Revenue drop of ${Math.abs(differencePercent).toFixed(1)}% below average`\n            );\n        }\n    }\n}\n\n\n// Store concentration warning\nif (\n    topStore[1] > 0 &&\n    totalRevenue > 0\n) {\n\n    const storeShare =\n        (topStore[1] / totalRevenue) * 100;\n\n    if (storeShare >= 60) {\n\n        anomalies.push(\n            `${topStore[0]} contributes ${storeShare.toFixed(1)}% of total revenue, indicating high store concentration`\n        );\n    }\n}\n\n\n// Category concentration warning\nif (\n    topCategory[1] > 0 &&\n    totalRevenue > 0\n) {\n\n    const categoryShare =\n        (topCategory[1] / totalRevenue) * 100;\n\n    if (categoryShare >= 60) {\n\n        anomalies.push(\n            `${topCategory[0]} contributes ${categoryShare.toFixed(1)}% of total revenue, indicating high category concentration`\n        );\n    }\n}\n\n\n// --------------------\n// FINAL OUTPUT\n// --------------------\n\nreturn [\n    {\n        json: {\n\n            // BASIC KPIs\n            totalRevenue:\n                Number(totalRevenue.toFixed(2)),\n\n            totalTransactions,\n\n            totalQuantitySold:\n                totalQuantity,\n\n            averageTransactionValue:\n                Number(averageTransactionValue.toFixed(2)),\n\n\n            // TOP PERFORMERS\n            topStore: {\n                name: topStore[0],\n                revenue: Number(topStore[1].toFixed(2))\n            },\n\n            topCategory: {\n                name: topCategory[0],\n                revenue: Number(topCategory[1].toFixed(2))\n            },\n\n            topProduct: {\n                name: topProduct[0],\n                revenue: Number(topProduct[1].toFixed(2))\n            },\n\n            lowestProduct: {\n                name: lowestProduct[0],\n                revenue: Number(lowestProduct[1].toFixed(2))\n            },\n\n\n            // TIME INSIGHTS\n            busiestHour: {\n                hour: busiestHour[0],\n                revenue: Number(busiestHour[1].toFixed(2))\n            },\n\n            slowestHour: {\n                hour: slowestHour[0],\n                revenue: Number(slowestHour[1].toFixed(2))\n            },\n\n\n            // DAY INSIGHTS\n            bestDay: {\n                date: bestDay[0],\n                revenue: Number(bestDay[1].toFixed(2))\n            },\n\n            worstDay: {\n                date: worstDay[0],\n                revenue: Number(worstDay[1].toFixed(2))\n            },\n\n            dailyGrowthPercent,\n\n\n            // ADVANCED ANALYTICS\n            top5Products,\n            bottom5Products,\n            storeRanking,\n            categoryContribution,\n\n\n            // ANOMALIES\n            anomalyCount:\n                anomalies.length,\n\n            anomalies,\n\n\n            // DATA QUALITY\n            dataQuality: {\n                validRows,\n                invalidRows,\n                totalRows: items.length\n            },\n\n\n            // RAW AGGREGATIONS\n            revenueByStore: storeRevenue,\n            revenueByCategory: categoryRevenue,\n            hourlyRevenue,\n            dailyRevenue\n        }\n    }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "id": "f5ffedd9-9852-41c0-93d1-af1f45d5de29",
+      "name": "Calculate KPIs"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "models/gemini-3-flash-preview"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Analyze this coffee shop sales data as a CEO would want to see it. Be concise and actionable.\n\nSALES SUMMARY:\n\u2022 Total Revenue: ${{ $json.totalRevenue }}\n\u2022 Total Transactions: {{ $json.totalTransactions }}\n\u2022 Total Quantity Sold: {{ $json.totalQuantitySold }}\n\u2022 Average Transaction Value: ${{ $json.averageTransactionValue }}\n\nTOP PERFORMERS:\n\u2022 Top Store: {{ $json.topStore.name }} (${{ $json.topStore.revenue }})\n\u2022 Top Category: {{ $json.topCategory.name }} (${{ $json.topCategory.revenue }})\n\u2022 Top Product: {{ $json.topProduct.name }} (${{ $json.topProduct.revenue }})\n\nLOW PERFORMER:\n\u2022 Lowest Revenue Product: {{ $json.lowestProduct.name }} (${{ $json.lowestProduct.revenue }})\n\nTIME INSIGHTS:\n\u2022 Busiest Hour: {{ $json.busiestHour.hour }}:00 (${{ $json.busiestHour.revenue }})\n\nSTORE PERFORMANCE:\n{{ Object.entries($json.revenueByStore).map(([store, revenue]) => `${store}: $${revenue.toFixed(2)}`).join(', ') }}\n\nCATEGORY PERFORMANCE:\n{{ Object.entries($json.revenueByCategory).map(([category, revenue]) => `${category}: $${revenue.toFixed(2)}`).join(', ') }}\n\nProvide a 3-4 sentence executive summary with the most important business insights.\n\nThen provide 2-3 actionable recommendations for management.\n\nFocus on:\n- Which store is performing best\n- Which product/category is driving revenue\n- Which product is underperforming\n- Peak sales timing\n- Any unusual sales pattern or concentration that management should investigate"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        1120,
+        0
+      ],
+      "id": "1075f2be-8d11-43c4-b728-214842cb8bdb",
+      "name": "Message a model"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_SLACK_CHANNEL_ID"
+        },
+        "text": "=\ud83d\udcca *Coffee Shop Sales Update*  \ud83d\udcb0 *Revenue:* ${{ $('Calculate KPIs').item.json.totalRevenue }} \ud83e\uddfe *Total Transactions:* {{ $('Calculate KPIs').item.json.totalTransactions }} \ud83d\udce6 *Quantity Sold:* {{ $('Calculate KPIs').item.json.totalQuantitySold }} \ud83d\udcc8 *Avg Transaction Value:* ${{ $('Calculate KPIs').item.json.averageTransactionValue }}  \ud83c\udfc6 *Top Performers:* \u2022 Top Store: {{ $('Calculate KPIs').item.json.topStore.name }} (${{ $('Calculate KPIs').item.json.topStore.revenue }}) \u2022 Top Category: {{ $('Calculate KPIs').item.json.topCategory.name }} (${{ $('Calculate KPIs').item.json.topCategory.revenue }}) \u2022 Top Product: {{ $('Calculate KPIs').item.json.topProduct.name }} (${{ $('Calculate KPIs').item.json.topProduct.revenue }})  \ud83d\udcc9 *Lowest Performing Product:* \u2022 {{ $('Calculate KPIs').item.json.lowestProduct.name }} (${{ $('Calculate KPIs').item.json.lowestProduct.revenue }})  \u23f0 *Peak Hour:* \u2022 {{ $('Calculate KPIs').item.json.busiestHour.hour }}:00 (${{ $('Calculate KPIs').item.json.busiestHour.revenue }})  \ud83d\udccd *Store Performance:* {{ Object.entries($('Calculate KPIs').item.json.revenueByStore).map(([store, revenue]) => '\u2022 ' + store + ': $' + revenue.toFixed(2)).join('\\n') }}  \u2615 *Category Performance:* {{ Object.entries($('Calculate KPIs').item.json.revenueByCategory).map(([category, revenue]) => '\u2022 ' + category + ': $' + revenue.toFixed(2)).join('\\n') }}  \ud83e\udd16 *AI Insight:* {{ $json.content.parts[0].text }}",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        1488,
+        160
+      ],
+      "id": "5e40f9e6-bc86-40a3-a13e-22ca6c54205a",
+      "name": "send message to channel"
+    },
+    {
+      "parameters": {
+        "sendTo": "your-email@example.com",
+        "subject": "=Daily Coffee Shop Performance | ${{ $('Calculate KPIs').item.json.totalRevenue }} Revenue | Top Store: {{ $('Calculate KPIs').item.json.topStore.name }}",
+        "message": "=<div style=\"margin:0;padding:0;background:#efe5d8;font-family:Arial,Helvetica,sans-serif;color:#2a1b14;\">\n\n  <div style=\"max-width:760px;margin:0 auto;padding:24px 12px;\">\n\n    <!-- ================= HERO IMAGE ================= -->\n\n    <div style=\"\n      background:#1b0f0a;\n      border-radius:24px 24px 0 0;\n      overflow:hidden;\n    \">\n\n      <img\n        src=\"https://images.unsplash.com/photo-1712636995182-b3ef153b35c3?auto=format&fit=crop&w=1600&q=85\"\n        width=\"100%\"\n        alt=\"Coffee Shop\"\n        style=\"\n          display:block;\n          width:100%;\n          height:300px;\n          object-fit:cover;\n          border:0;\n        \"\n      >\n\n      <div style=\"\n        background:#1b0f0a;\n        padding:28px 34px 32px;\n        color:#ffffff;\n      \">\n\n        <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">\n          <tr>\n            <td>\n\n              <div style=\"\n                color:#d7a96b;\n                font-size:11px;\n                font-weight:bold;\n                letter-spacing:2px;\n                text-transform:uppercase;\n              \">\n                \u2615 AI SALES INTELLIGENCE\n              </div>\n\n              <h1 style=\"\n                margin:10px 0 7px;\n                font-size:32px;\n                line-height:1.15;\n                color:#ffffff;\n              \">\n                Your Daily Coffee<br>\n                Business Brief\n              </h1>\n\n              <div style=\"\n                font-size:14px;\n                line-height:1.6;\n                color:#cdbfb7;\n              \">\n                Sales performance, customer behaviour & AI-powered opportunities.\n              </div>\n\n            </td>\n\n            <td width=\"120\" align=\"right\" valign=\"bottom\">\n\n              <div style=\"\n                border:1px solid #5c4438;\n                border-radius:12px;\n                padding:11px;\n                text-align:center;\n              \">\n                <div style=\"font-size:10px;color:#9e8c82;\">\n                  REPORT DATE\n                </div>\n\n                <div style=\"\n                  margin-top:5px;\n                  color:#ffffff;\n                  font-size:13px;\n                  font-weight:bold;\n                \">\n                  {{\n                    Object.keys($('Calculate KPIs').item.json.dailyRevenue)\n                    .sort()\n                    .slice(-1)[0]\n                  }}\n                </div>\n              </div>\n\n            </td>\n          </tr>\n        </table>\n\n      </div>\n\n    </div>\n\n\n    <!-- ================= BODY ================= -->\n\n    <div style=\"\n      background:#fffaf4;\n      padding:30px 26px;\n      border-radius:0 0 24px 24px;\n      box-shadow:0 14px 40px rgba(66,38,21,0.15);\n    \">\n\n\n      <!-- LABEL -->\n\n      <div style=\"\n        font-size:11px;\n        color:#a3683f;\n        font-weight:bold;\n        letter-spacing:2px;\n        text-transform:uppercase;\n      \">\n        DAILY SNAPSHOT\n      </div>\n\n      <h2 style=\"\n        margin:6px 0 18px;\n        font-size:22px;\n        color:#2b180f;\n      \">\n        The numbers that matter\n      </h2>\n\n\n      <!-- ================= PRIMARY KPI CARDS ================= -->\n\n      <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">\n\n        <tr>\n\n          <!-- REVENUE -->\n          <td width=\"50%\" style=\"padding:6px;\" valign=\"top\">\n\n            <div style=\"\n              background:#48291c;\n              border-radius:17px;\n              padding:21px;\n              color:#ffffff;\n            \">\n\n              <div style=\"font-size:22px;\">\ud83d\udcb0</div>\n\n              <div style=\"\n                margin-top:12px;\n                color:#d8b89d;\n                font-size:10px;\n                font-weight:bold;\n                letter-spacing:1.3px;\n              \">\n                TOTAL REVENUE\n              </div>\n\n              <div style=\"\n                margin-top:5px;\n                font-size:29px;\n                font-weight:bold;\n              \">\n                ${{ $('Calculate KPIs').item.json.totalRevenue }}\n              </div>\n\n            </div>\n\n          </td>\n\n\n          <!-- AVG TICKET -->\n          <td width=\"50%\" style=\"padding:6px;\" valign=\"top\">\n\n            <div style=\"\n              background:#c17b46;\n              border-radius:17px;\n              padding:21px;\n              color:#ffffff;\n            \">\n\n              <div style=\"font-size:22px;\">\ud83d\uded2</div>\n\n              <div style=\"\n                margin-top:12px;\n                color:#fff0df;\n                font-size:10px;\n                font-weight:bold;\n                letter-spacing:1.3px;\n              \">\n                AVG TRANSACTION\n              </div>\n\n              <div style=\"\n                margin-top:5px;\n                font-size:29px;\n                font-weight:bold;\n              \">\n                ${{ $('Calculate KPIs').item.json.averageTransactionValue }}\n              </div>\n\n            </div>\n\n          </td>\n\n        </tr>\n\n      </table>\n\n\n      <!-- SMALL KPI ROW -->\n\n      <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">\n\n        <tr>\n\n          <td width=\"25%\" style=\"padding:5px;\">\n\n            <div style=\"\n              background:#ffffff;\n              border:1px solid #eadacc;\n              border-radius:14px;\n              padding:16px 8px;\n              text-align:center;\n            \">\n\n              <div style=\"font-size:18px;\">\ud83e\uddfe</div>\n\n              <div style=\"\n                font-size:20px;\n                font-weight:bold;\n                margin-top:5px;\n              \">\n                {{ $('Calculate KPIs').item.json.totalTransactions }}\n              </div>\n\n              <div style=\"\n                font-size:9px;\n                color:#9a7a68;\n                margin-top:4px;\n              \">\n                TRANSACTIONS\n              </div>\n\n            </div>\n\n          </td>\n\n\n          <td width=\"25%\" style=\"padding:5px;\">\n\n            <div style=\"\n              background:#ffffff;\n              border:1px solid #eadacc;\n              border-radius:14px;\n              padding:16px 8px;\n              text-align:center;\n            \">\n\n              <div style=\"font-size:18px;\">\ud83d\udce6</div>\n\n              <div style=\"\n                font-size:20px;\n                font-weight:bold;\n                margin-top:5px;\n              \">\n                {{ $('Calculate KPIs').item.json.totalQuantitySold }}\n              </div>\n\n              <div style=\"\n                font-size:9px;\n                color:#9a7a68;\n                margin-top:4px;\n              \">\n                UNITS SOLD\n              </div>\n\n            </div>\n\n          </td>\n\n\n          <td width=\"25%\" style=\"padding:5px;\">\n\n            <div style=\"\n              background:#ffffff;\n              border:1px solid #eadacc;\n              border-radius:14px;\n              padding:16px 8px;\n              text-align:center;\n            \">\n\n              <div style=\"font-size:18px;\">\u23f0</div>\n\n              <div style=\"\n                font-size:20px;\n                font-weight:bold;\n                margin-top:5px;\n              \">\n                {{ $('Calculate KPIs').item.json.busiestHour.hour }}:00\n              </div>\n\n              <div style=\"\n                font-size:9px;\n                color:#9a7a68;\n                margin-top:4px;\n              \">\n                PEAK HOUR\n              </div>\n\n            </div>\n\n          </td>\n\n\n          <td width=\"25%\" style=\"padding:5px;\">\n\n            <div style=\"\n              background:#ffffff;\n              border:1px solid #eadacc;\n              border-radius:14px;\n              padding:16px 8px;\n              text-align:center;\n            \">\n\n              <div style=\"font-size:18px;\">\ud83d\udcc8</div>\n\n              <div style=\"\n                font-size:20px;\n                font-weight:bold;\n                margin-top:5px;\n                color:{{\n                  $('Calculate KPIs').item.json.dailyGrowthPercent >= 0\n                  ? '#28755a'\n                  : '#b64235'\n                }};\n              \">\n\n                {{\n                  $('Calculate KPIs').item.json.dailyGrowthPercent === null\n                  ? 'N/A'\n                  : (\n                      $('Calculate KPIs').item.json.dailyGrowthPercent >= 0\n                      ? '\u25b2 ' + $('Calculate KPIs').item.json.dailyGrowthPercent + '%'\n                      : '\u25bc ' + Math.abs($('Calculate KPIs').item.json.dailyGrowthPercent) + '%'\n                    )\n                }}\n\n              </div>\n\n              <div style=\"\n                font-size:9px;\n                color:#9a7a68;\n                margin-top:4px;\n              \">\n                DAILY GROWTH\n              </div>\n\n            </div>\n\n          </td>\n\n        </tr>\n\n      </table>\n\n\n      <!-- ================= PERFORMANCE FEATURE ================= -->\n\n      <div style=\"\n        margin-top:27px;\n        background:#f0dfca;\n        border-radius:20px;\n        padding:23px;\n      \">\n\n        <table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">\n\n          <tr>\n\n            <td valign=\"top\">\n\n              <div style=\"\n                color:#9b6038;\n                font-size:10px;\n                font-weight:bold;\n                letter-spacing:1.5px;\n              \">\n                TODAY'S WINNERS\n              </div>\n\n              <h2 style=\"\n                margin:7px 0 18px;\n                font-size:21px;\n                color:#382216;\n              \">\n                \ud83c\udfc6 Performance Leaders\n              </h2>\n\n              <div style=\"\n                padding:10px 0;\n                border-bottom:1px solid #dac2aa;\n              \">\n                <span style=\"color:#886750;font-size:13px;\">\n                  Best Store\n                </span>\n\n                <strong style=\"float:right;\">\n                  {{ $('Calculate KPIs').item.json.topStore.name }}\n                </strong>\n              </div>\n\n\n              <div style=\"\n                padding:12px 0;\n                border-bottom:1px solid #dac2aa;\n              \">\n                <span style=\"color:#886750;font-size:13px;\">\n                  Top Category\n                </span>\n\n                <strong style=\"float:right;\">\n                  {{ $('Calculate KPIs').item.json.topCategory.name }}\n                </strong>\n              </div>\n\n\n              <div style=\"\n                padding:12px 0;\n                border-bottom:1px solid #dac2aa;\n              \">\n                <span style=\"color:#886750;font-size:13px;\">\n                  Top Product\n                </span>\n\n                <strong style=\"float:right;\">\n                  {{ $('Calculate KPIs').item.json.topProduct.name }}\n                </strong>\n              </div>\n\n\n              <div style=\"padding:12px 0 0;\">\n\n                <span style=\"color:#886750;font-size:13px;\">\n                  Best Sales Day\n                </span>\n\n                <strong style=\"float:right;\">\n                  {{ $('Calculate KPIs').item.json.bestDay.date }}\n                </strong>\n\n              </div>\n\n            </td>\n\n          </tr>\n\n        </table>\n\n      </div>\n\n\n      <!-- ================= IMAGE DIVIDER ================= -->\n\n      <div style=\"\n        margin:30px 0 0;\n        border-radius:20px;\n        overflow:hidden;\n      \">\n\n        <img\n          src=\"https://images.unsplash.com/photo-1744995537110-a78964c7719c?auto=format&fit=crop&w=1200&q=85\"\n          width=\"100%\"\n          alt=\"Coffee\"\n          style=\"\n            display:block;\n            width:100%;\n            height:220px;\n            object-fit:cover;\n          \"\n        >\n\n      </div>\n\n\n      <!-- ================= TOP PRODUCTS ================= -->\n\n      <div style=\"margin-top:30px;\">\n\n        <div style=\"\n          color:#a3683f;\n          font-size:10px;\n          font-weight:bold;\n          letter-spacing:2px;\n        \">\n          PRODUCT INTELLIGENCE\n        </div>\n\n        <h2 style=\"\n          margin:6px 0 15px;\n          font-size:21px;\n          color:#2b180f;\n        \">\n          \ud83d\udd25 Top Selling Products\n        </h2>\n\n\n        <table width=\"100%\" cellpadding=\"12\" cellspacing=\"0\"\n          style=\"\n            border-collapse:separate;\n            border-spacing:0;\n            background:#ffffff;\n            border:1px solid #ead9ca;\n            border-radius:16px;\n            overflow:hidden;\n          \">\n\n          <tr style=\"\n            background:#342017;\n            color:#ffffff;\n          \">\n\n            <th align=\"left\" style=\"font-size:11px;\">RANK</th>\n            <th align=\"left\" style=\"font-size:11px;\">PRODUCT</th>\n            <th align=\"right\" style=\"font-size:11px;\">UNITS</th>\n            <th align=\"right\" style=\"font-size:11px;\">REVENUE</th>\n\n          </tr>\n\n\n          {{\n            $('Calculate KPIs').item.json.top5Products\n            .map((p,i) =>\n              '<tr style=\"background:' + (i % 2 === 0 ? '#fffaf4' : '#ffffff') + ';\">' +\n\n              '<td style=\"border-top:1px solid #f0e3d7;color:#c07a46;font-weight:bold;\">' +\n                '#' + (i + 1) +\n              '</td>' +\n\n              '<td style=\"border-top:1px solid #f0e3d7;font-weight:bold;color:#382218;\">' +\n                p.name +\n              '</td>' +\n\n              '<td align=\"right\" style=\"border-top:1px solid #f0e3d7;color:#765848;\">' +\n                p.quantity +\n              '</td>' +\n\n              '<td align=\"right\" style=\"border-top:1px solid #f0e3d7;color:#28755a;font-weight:bold;\">$' +\n                Number(p.revenue).toFixed(2) +\n              '</td>' +\n\n              '</tr>'\n            ).join('')\n          }}\n\n        </table>\n\n      </div>\n\n\n      <!-- ================= STORES ================= -->\n\n      <div style=\"margin-top:30px;\">\n\n        <div style=\"\n          color:#a3683f;\n          font-size:10px;\n          font-weight:bold;\n          letter-spacing:2px;\n        \">\n          LOCATION PERFORMANCE\n        </div>\n\n        <h2 style=\"\n          margin:6px 0 15px;\n          font-size:21px;\n        \">\n          \ud83d\udccd Store Leaderboard\n        </h2>\n\n\n        {{\n          $('Calculate KPIs').item.json.storeRanking\n          .map(s =>\n\n            '<div style=\"' +\n              'background:#ffffff;' +\n              'border:1px solid #ead9ca;' +\n              'border-radius:15px;' +\n              'padding:16px 18px;' +\n              'margin-bottom:10px;' +\n            '\">' +\n\n            '<table width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">' +\n            '<tr>' +\n\n            '<td>' +\n\n              '<div style=\"font-size:15px;font-weight:bold;color:#342017;\">' +\n                '#' + s.rank + ' &nbsp;' + s.name +\n              '</div>' +\n\n              '<div style=\"font-size:11px;color:#987561;margin-top:5px;\">' +\n                s.contributionPercent + '% revenue contribution' +\n              '</div>' +\n\n            '</td>' +\n\n            '<td align=\"right\">' +\n\n              '<div style=\"font-size:18px;font-weight:bold;color:#b66935;\">$' +\n                Number(s.revenue).toFixed(2) +\n              '</div>' +\n\n            '</td>' +\n\n            '</tr></table>' +\n\n            '</div>'\n\n          ).join('')\n        }}\n\n      </div>\n\n\n      <!-- ================= CATEGORY ================= -->\n\n      <div style=\"margin-top:29px;\">\n\n        <h2 style=\"\n          margin:0 0 14px;\n          font-size:21px;\n        \">\n          \ud83c\udf70 Revenue Mix\n        </h2>\n\n\n        <table width=\"100%\" cellpadding=\"12\" cellspacing=\"0\"\n          style=\"\n            border-collapse:collapse;\n            background:#faf1e7;\n            border-radius:16px;\n            overflow:hidden;\n          \">\n\n          <tr style=\"\n            background:#b36c3b;\n            color:#ffffff;\n          \">\n            <th align=\"left\">Category</th>\n            <th align=\"right\">Share</th>\n            <th align=\"right\">Revenue</th>\n          </tr>\n\n\n          {{\n            $('Calculate KPIs').item.json.categoryContribution\n            .map(c =>\n\n              '<tr>' +\n\n              '<td style=\"border-top:1px solid #e7d1bd;font-weight:bold;\">' +\n                c.name +\n              '</td>' +\n\n              '<td align=\"right\" style=\"border-top:1px solid #e7d1bd;color:#976240;\">' +\n                c.contributionPercent + '%' +\n              '</td>' +\n\n              '<td align=\"right\" style=\"border-top:1px solid #e7d1bd;font-weight:bold;\">$' +\n                Number(c.revenue).toFixed(2) +\n              '</td>' +\n\n              '</tr>'\n\n            ).join('')\n          }}\n\n        </table>\n\n      </div>\n\n\n      <!-- ================= ANOMALY ================= -->\n\n      <div style=\"\n        margin-top:28px;\n        padding:20px;\n        border-radius:17px;\n        background:{{\n          $('Calculate KPIs').item.json.anomalyCount > 0\n          ? '#fff0ec'\n          : '#edf7f1'\n        }};\n        border:1px solid {{\n          $('Calculate KPIs').item.json.anomalyCount > 0\n          ? '#efb4a7'\n          : '#acd5bc'\n        }};\n      \">\n\n        <div style=\"\n          font-size:11px;\n          font-weight:bold;\n          letter-spacing:1.3px;\n          color:{{\n            $('Calculate KPIs').item.json.anomalyCount > 0\n            ? '#b74432'\n            : '#28755a'\n          }};\n        \">\n\n          {{\n            $('Calculate KPIs').item.json.anomalyCount > 0\n            ? '\u26a0\ufe0f BUSINESS ATTENTION'\n            : '\u2713 BUSINESS HEALTH'\n          }}\n\n        </div>\n\n\n        <div style=\"\n          margin-top:6px;\n          font-size:19px;\n          font-weight:bold;\n        \">\n\n          {{\n            $('Calculate KPIs').item.json.anomalyCount > 0\n            ? $('Calculate KPIs').item.json.anomalyCount + ' unusual pattern(s) detected'\n            : 'Performance looks stable'\n          }}\n\n        </div>\n\n\n        {{\n          $('Calculate KPIs').item.json.anomalyCount > 0\n          ? '<div style=\"margin-top:11px;font-size:13px;line-height:1.8;color:#73493c;\">'\n            + $('Calculate KPIs').item.json.anomalies\n            .map(a => '\u2022 ' + a)\n            .join('<br>')\n            + '</div>'\n          : '<div style=\"margin-top:7px;font-size:13px;color:#527260;\">No major revenue anomalies require immediate attention.</div>'\n        }}\n\n      </div>\n\n\n      <!-- ================= UNDERPERFORMER ================= -->\n\n      <div style=\"\n        margin-top:18px;\n        padding:20px;\n        background:#fff3df;\n        border-left:5px solid #d7944f;\n        border-radius:14px;\n      \">\n\n        <div style=\"\n          font-size:10px;\n          letter-spacing:1.5px;\n          font-weight:bold;\n          color:#a8662c;\n        \">\n          \ud83d\udca1 SALES OPPORTUNITY\n        </div>\n\n        <div style=\"\n          margin-top:7px;\n          font-size:18px;\n          font-weight:bold;\n        \">\n          {{ $('Calculate KPIs').item.json.lowestProduct.name }}\n        </div>\n\n        <div style=\"\n          margin-top:5px;\n          color:#7f6047;\n          font-size:13px;\n          line-height:1.6;\n        \">\n          Lowest revenue product at\n          <strong>${{ $('Calculate KPIs').item.json.lowestProduct.revenue }}</strong>.\n          Consider bundling, repositioning, promotion or removing it if performance remains weak.\n        </div>\n\n      </div>\n\n\n      <!-- ================= GEMINI ANALYSIS ================= -->\n\n      <div style=\"\n        margin-top:30px;\n        background:#251710;\n        border-radius:20px;\n        overflow:hidden;\n      \">\n\n        <div style=\"\n          background:#c17b46;\n          padding:8px 22px;\n          color:#ffffff;\n          font-size:10px;\n          font-weight:bold;\n          letter-spacing:2px;\n        \">\n          \u2728 GEMINI AI ANALYSIS\n        </div>\n\n        <div style=\"\n          padding:24px;\n          color:#f5ebe3;\n        \">\n\n          <h2 style=\"\n            color:#ffffff;\n            margin:0 0 14px;\n            font-size:21px;\n          \">\n            Executive Intelligence\n          </h2>\n\n          <div style=\"\n            font-size:14px;\n            line-height:1.9;\n            color:#dbcac0;\n          \">\n\n            {{\n              $json.content.parts[0].text\n              .replace(\n                /\\*\\*(.*?)\\*\\*/g,\n                '<strong style=\"color:#e3ad72;\">$1</strong>'\n              )\n              .replace(/\\n/g,'<br>')\n            }}\n\n          </div>\n\n        </div>\n\n      </div>\n\n\n      <!-- ================= DATA QUALITY ================= -->\n\n      <div style=\"\n        margin-top:22px;\n        padding:14px 18px;\n        border-radius:12px;\n        background:#f3ebe3;\n        color:#806858;\n        font-size:11px;\n        text-align:center;\n      \">\n\n        \ud83d\udee1\ufe0f\n        <strong>Data Quality</strong>\n        &nbsp;\u2022&nbsp;\n\n        {{ $('Calculate KPIs').item.json.dataQuality.validRows }}\n        valid\n\n        &nbsp;\u2022&nbsp;\n\n        {{ $('Calculate KPIs').item.json.dataQuality.invalidRows }}\n        invalid\n\n        &nbsp;\u2022&nbsp;\n\n        {{ $('Calculate KPIs').item.json.dataQuality.totalRows }}\n        rows processed\n\n      </div>\n\n\n      <!-- ================= FOOTER ================= -->\n\n      <div style=\"\n        margin-top:30px;\n        text-align:center;\n        border-top:1px solid #eadacc;\n        padding-top:22px;\n      \">\n\n        <div style=\"\n          font-size:20px;\n          font-weight:bold;\n          color:#382218;\n        \">\n          \u2615 Coffee Intelligence\n        </div>\n\n        <div style=\"\n          margin-top:6px;\n          font-size:11px;\n          color:#a08a7d;\n        \">\n          Automated Sales Intelligence \u2022 n8n \u00d7 Gemini\n        </div>\n\n      </div>\n\n\n    </div>\n\n  </div>\n\n</div>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1488,
+        -208
+      ],
+      "id": "d5582545-b730-4c99-9ac2-1d696c3ecdc3",
+      "name": "Send mail through gmail"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\n\nconst seenIds = new Set();\n\nfor (const item of items) {\n    const d = item.json;\n\n    const issues = [];\n\n    // 1. Transaction ID\n    if (\n        d.transaction_id === undefined ||\n        d.transaction_id === null ||\n        String(d.transaction_id).trim() === \"\"\n    ) {\n        issues.push(\"Missing transaction_id\");\n    } \n    else {\n        const id = String(d.transaction_id).trim();\n\n        if (seenIds.has(id)) {\n            issues.push(\"Duplicate transaction_id\");\n        } else {\n            seenIds.add(id);\n        }\n    }\n\n    // 2. Date\n    if (\n        d.transaction_date === undefined ||\n        d.transaction_date === null ||\n        String(d.transaction_date).trim() === \"\"\n    ) {\n        issues.push(\"Missing transaction_date\");\n    }\n\n    // 3. Time\n    if (\n        d.transaction_time === undefined ||\n        d.transaction_time === null ||\n        String(d.transaction_time).trim() === \"\"\n    ) {\n        issues.push(\"Missing transaction_time\");\n    }\n\n    // 4. Quantity\n    const qty = Number(d.transaction_qty);\n\n    if (d.transaction_qty === undefined || d.transaction_qty === null || isNaN(qty)) {\n        issues.push(\"Invalid transaction_qty\");\n    } \n    else if (qty <= 0) {\n        issues.push(\"Quantity must be greater than 0\");\n    }\n\n    // 5. Unit Price\n    const price = Number(d.unit_price);\n\n    if (d.unit_price === undefined || d.unit_price === null || isNaN(price)) {\n        issues.push(\"Invalid unit_price\");\n    } \n    else if (price <= 0) {\n        issues.push(\"Unit price must be greater than 0\");\n    }\n\n    // 6. Store\n    if (!d.store_location || String(d.store_location).trim() === \"\") {\n        issues.push(\"Missing store_location\");\n    }\n\n    // 7. Product Category\n    if (!d.product_category || String(d.product_category).trim() === \"\") {\n        issues.push(\"Missing product_category\");\n    }\n\n    // 8. Product Detail\n    if (!d.product_detail || String(d.product_detail).trim() === \"\") {\n        issues.push(\"Missing product_detail\");\n    }\n\n    // Final quality status\n    d.is_valid = issues.length === 0;\n\n    d.data_quality_status =\n        issues.length === 0 ? \"Valid\" : \"Invalid\";\n\n    d.data_quality_issues =\n        issues.length === 0 ? \"None\" : issues.join(\", \");\n}\n\nreturn items;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "c39b7949-7404-401e-b8e5-79142f354c0e",
+      "name": "Data Quality Check"
+    },
+    {
+      "parameters": {
+        "operation": "markAsRead",
+        "messageId": "={{ $('Gmail Trigger').first().json.id }}"
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1728,
+        -16
+      ],
+      "id": "b2a767a2-ac64-4b58-9d44-735e9f24896e",
+      "name": "Mark a message as read"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Data Quality Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Revenue": {
+      "main": [
+        [
+          {
+            "node": "Calculate KPIs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate KPIs": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "send message to channel",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send mail through gmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Data Quality Check": {
+      "main": [
+        [
+          {
+            "node": "Calculate Revenue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send mail through gmail": {
+      "main": [
+        [
+          {
+            "node": "Mark a message as read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "send message to channel": {
+      "main": [
+        [
+          {
+            "node": "Mark a message as read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "nodeGroups": []
+}
