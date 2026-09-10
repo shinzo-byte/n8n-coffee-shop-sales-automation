@@ -3,6 +3,26 @@ An n8n workflow that turns an emailed sales CSV into revenue metrics and an AI-g
 
 ![n8n workflow](assets/workflow.png)
 
+## Sample Output
+Selected screenshots from a generated Gmail report supplied by the project author. These illustrate a different input dataset from the three-row example below.
+
+### Sales snapshot
+The report shows **$6,436.90 revenue**, **814 transactions**, **1,309 units sold** and **$7.91 average transaction value**.
+
+![Email report showing sales KPIs](assets/output/sales-kpis.png)
+
+### Revenue mix and unusual patterns
+Category revenue contributions and flagged daily revenue spikes or drops.
+
+![Revenue mix and anomaly alerts](assets/output/revenue-and-anomalies.png)
+
+### Gemini summary and recommendations
+The generated narrative discusses Jackson Heights, the evening sales peak and product performance. Recommendations are AI-generated suggestions for review.
+
+![Gemini executive summary](assets/output/ai-summary.png)
+
+![AI recommendations and data-quality results](assets/output/recommendations-and-quality.png)
+
 ## What it does
 1. Polls Gmail every minute for unread messages and downloads attachments.
 2. Extracts the first attachment as a pipe-delimited CSV.
@@ -15,7 +35,8 @@ An n8n workflow that turns an emailed sales CSV into revenue metrics and an AI-g
 ## Files
 - `workflows/coffee_shop.json`: importable workflow with personal configuration removed.
 - `assets/workflow.png`: workflow screenshot.
-- This README: input example, setup and implementation notes.
+- `assets/output/`: selected screenshots of the generated Gmail report.
+- This README: output previews, input example, setup and implementation notes.
 
 ## Setup
 1. Download `workflows/coffee_shop.json` and import it into n8n.
